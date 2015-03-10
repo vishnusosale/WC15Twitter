@@ -8,15 +8,19 @@ import android.net.Uri;
 import android.os.AsyncTask;
 import android.os.Bundle;
 import android.support.v7.app.ActionBarActivity;
+import android.util.Log;
 import android.view.Menu;
 import android.view.MenuItem;
 import android.widget.ArrayAdapter;
 import android.widget.ListAdapter;
 import android.widget.ListView;
 import android.widget.SimpleCursorAdapter;
+import android.widget.Toast;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Timer;
+import java.util.TimerTask;
 
 import twitter4j.Query;
 import twitter4j.QueryResult;
@@ -34,6 +38,12 @@ public class MainActivity extends ActionBarActivity {
     private ListAdapter listAdapter;
     private FeedsDBHelper helper;
 
+    private Timer timer;
+    private TimerTask timerTask;
+
+    Cursor cursor;
+    SQLiteDatabase db;
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -42,19 +52,24 @@ public class MainActivity extends ActionBarActivity {
         twitterFeedListView = (ListView) findViewById(R.id.twitterFeedListView);
 
         InternetState state = new InternetState(this);
-
-
         if (state.isConnectingToInternet()) {
             new getTwitterStatusFromInternet().execute();
 
         } else {
-            updateUI();
+            getTweetsFromDb();
         }
     }
 
+    private void getTweetsFromDb()
+    {
+        Toast.makeText(getApplicationContext(), "No Internet Connectivity", Toast.LENGTH_SHORT).show();
+        updateUI();
+    }
+
+
     private void insert(String myTweets) {
         helper = new FeedsDBHelper(MainActivity.this);
-        SQLiteDatabase db = helper.getWritableDatabase();
+        db = helper.getWritableDatabase();
         ContentValues values = new ContentValues();
 
         values.clear();
@@ -65,19 +80,61 @@ public class MainActivity extends ActionBarActivity {
     }
 
     private void updateUI() {
+
+
         Uri uri = FeedsContract.CONTENT_URI;
-        Cursor cursor = this.getContentResolver().query(uri, null, null, null, null);
+        cursor = this.getContentResolver().query(uri, null, null, null, null);
 
         listAdapter = new SimpleCursorAdapter(
                 this,
                 R.layout.tweets_row_item,
                 cursor,
                 new String[]{FeedsContract.Columns.STATUS},
-                new int[]{R.id.task_description},
+                new int[]{R.id.tweets},
                 0
         );
 
         twitterFeedListView.setAdapter(listAdapter);
+    }
+
+    @Override
+    protected void onPause() {
+        super.onPause();
+        timer.cancel();
+        if (cursor!=null)
+        {
+            cursor.close();
+        }
+        if (db!=null)
+        {
+            db.close();
+        }
+    }
+
+    public void onResume(){
+        super.onResume();
+        try {
+            timer = new Timer();
+            timerTask = new TimerTask() {
+                @Override
+                public void run() {
+                    runOnUiThread(new Runnable() {
+                        public void run() {
+                            InternetState state = new InternetState(getApplicationContext());
+                            if (state.isConnectingToInternet()) {
+                                new getTwitterStatusFromInternet().execute();
+
+                            } else {
+                                getTweetsFromDb();
+                            }
+                        }
+                    });
+                }
+            };
+            timer.schedule(timerTask, 30000, 30000);
+        } catch (IllegalStateException e){
+            Log.i("timer", "resume error");
+        }
     }
 
     @Override
@@ -100,7 +157,13 @@ public class MainActivity extends ActionBarActivity {
         }
 
         if (id == R.id.action_refresh) {
-            new getTwitterStatusFromInternet().execute();
+            InternetState state = new InternetState(this);
+            if (state.isConnectingToInternet()) {
+                new getTwitterStatusFromInternet().execute();
+
+            } else {
+                getTweetsFromDb();
+            }
             return true;
         }
         return super.onOptionsItemSelected(item);
@@ -128,10 +191,10 @@ public class MainActivity extends ActionBarActivity {
 
 
             ConfigurationBuilder cb = new ConfigurationBuilder();
-            cb.setOAuthConsumerKey("ConsumerKey")
-                    .setOAuthConsumerSecret("ConsumerSecret")
-                    .setOAuthAccessToken("AccessToken")
-                    .setOAuthAccessTokenSecret("AccessTokenSecret");
+            cb.setOAuthConsumerKey(getString(R.string.OAuthConsumerKey))
+                    .setOAuthConsumerSecret(getString(R.string.OAuthConsumerSecret))
+                    .setOAuthAccessToken(getString(R.string.OAuthAccessToken))
+                    .setOAuthAccessTokenSecret(getString(R.string.OAuthAccessTokenSecret));
 
             TwitterFactory tf = new TwitterFactory(cb.build());
             Twitter twitter = tf.getInstance();
@@ -169,7 +232,7 @@ public class MainActivity extends ActionBarActivity {
                 @Override
                 public void run() {
                     stringTweetAdapter = new ArrayAdapter<>(MainActivity.this,
-                            R.layout.tweets_row_item, R.id.task_description, stringStatuses);
+                            R.layout.tweets_row_item, R.id.tweets, stringStatuses);
                     twitterFeedListView.setAdapter(stringTweetAdapter);
                 }
             });
